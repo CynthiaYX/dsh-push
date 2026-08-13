@@ -1,6 +1,6 @@
 {
   "name": "dsh-push",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Push DeepSeek Harness agent lifecycle notifications to configurable channels",
   "license": "MIT",
   "repository": {
@@ -25,6 +25,7 @@
     "cordis.patch.yml",
     "config.example.json",
     "README.md",
+    "README.zh-CN.md",
     "LICENSE"
   ],
   "dsh": {

@@ -1,45 +1,47 @@
 # dsh-push
 
-把 DeepSeek Harness 的 agent 生命周期通知推送到 Bark、飞书、企业微信、钉钉、ntfy 或通用 webhook。
+English | [简体中文](./README.zh-CN.md)
 
-## 安装
+Push DeepSeek Harness agent lifecycle notifications to Bark, Feishu, WeCom, DingTalk, ntfy, or a generic webhook.
 
-从 npm 安装：
+## Installation
+
+Install from npm:
 
 ```sh
 dsh plugin --profile web add dsh-push
 dsh plugin --profile headless add dsh-push
 ```
 
-从 GitHub 安装时使用提交固定的仓库地址：
+To install from GitHub, pin the repository to a commit:
 
 ```sh
 dsh plugin --profile web add github:kiim-wong/dsh-push#<sha>
 ```
 
-Git 安装会执行包的 `prepare` 构建脚本。首次安装前，在目标 profile 的 `pnpm-workspace.yaml` 中允许该包构建：
+Git installations run the package's `prepare` script. Before the first installation, allow the package to build in the target profile's `pnpm-workspace.yaml`:
 
 ```yaml
 allowBuilds:
   dsh-push: true
 ```
 
-包会通过 `cordis.patch.yml` 挂载为 `dsh-push`，不需要修改 dsh monorepo，也不写入 profile 的 patch 配置。
+The package mounts itself as `dsh-push` through `cordis.patch.yml`. It does not require changes to the dsh monorepo or write to the profile's patch configuration.
 
-## 配置
+## Configuration
 
-配置文件默认位于 `$DSH_HOME/dsh-push/config.json`；也可以用 `DSH_PUSH_CONFIG` 指定路径。可从 [`config.example.json`](./config.example.json) 开始。环境变量引用支持 `$VAR` 与 `${VAR}`，日志写入配置文件同目录的 `push.log`。
+The default configuration path is `$DSH_HOME/dsh-push/config.json`. Set `DSH_PUSH_CONFIG` to use another path. Start with [`config.example.json`](./config.example.json). Environment variable references support `$VAR` and `${VAR}`. Logs are written to `push.log` in the configuration file's directory.
 
-每个 channel 至少需要自己的类型和目标地址。敏感值只放配置文件或环境变量，不要放进 `cordis.patch.yml`。
+Each channel requires at least its type and destination. Keep secrets in the configuration file or environment variables, not in `cordis.patch.yml`.
 
-支持的事件为 `idle`、`interrupted`、`needInput` 和 `exit`。`idle` 可通过 `minDurationSec` 过滤；`interrupted` 不受该过滤影响。默认不推送 subagent，设置 `includeSubagents: true` 才会包含会话头部 `origin` 为 `subagent` 的 agent。
+Supported events are `idle`, `interrupted`, `needInput`, and `exit`. `minDurationSec` filters `idle` notifications but does not affect `interrupted` notifications. Subagents are excluded by default; set `includeSubagents: true` to include agents whose session header has `origin: "subagent"`.
 
-## `/push` 命令
+## `/push` command
 
-挂载命令服务时提供 `/push status`、`list`、`get`、`set`、`enable`、`disable`、`test`、`events`、`on` 和 `off`。没有命令服务的 headless 组合仍会加载推送事件监听器。
+When the command service is mounted, dsh-push provides `/push status`, `list`, `get`, `set`, `enable`, `disable`, `test`, `events`, `on`, and `off`. Headless compositions without the command service still load the notification event listeners.
 
-## 限制
+## Limitations
 
-通知发送不重试；每个请求有独立超时和进程退出时的有界 flush。dsh 没有 pi 的会话 quit 事件，因此 `exit` 表示插件树拆卸，不表示某个 Web 会话关闭。推送正文不包含对话正文，只包含生命周期摘要。
+Notification delivery is not retried. Each request has an independent timeout, and process teardown uses a bounded flush. dsh has no equivalent of pi's session quit event, so `exit` means the plugin tree is being disposed, not that an individual web session closed. Notification bodies contain lifecycle summaries, not conversation content.
 
-渠道实现沿用 pi-agent-push 的协议与签名算法；本项目仅将事件和命令层适配为 Cordis。
+Channel implementations retain the protocols and signing algorithms from pi-agent-push. This package adapts only the event and command layers to Cordis.
