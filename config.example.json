@@ -1,0 +1,31 @@
+{
+  "minDurationSec": 0,
+  "timeoutMs": 10000,
+  "shutdownTimeoutMs": 3000,
+  "dedupeMs": 3000,
+  "includeSubagents": false,
+  "needInputTools": [
+    "ask_user_question",
+    "exit_plan_mode"
+  ],
+  "events": {
+    "idle": true,
+    "interrupted": true,
+    "needInput": true,
+    "exit": false
+  },
+  "titleTemplate": "dsh {{status}}",
+  "template": "dsh {{status}} · {{reason}}",
+  "channels": [
+    {
+      "type": "webhook",
+      "name": "example",
+      "url": "$DSH_PUSH_WEBHOOK_URL",
+      "body": {
+        "title": "{{title}}",
+        "text": "{{text}}",
+        "event": "{{event}}"
+      }
+    }
+  ]
+}
