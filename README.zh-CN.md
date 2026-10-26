@@ -4,27 +4,17 @@
 
 把 DeepSeek Harness 的 agent 生命周期通知推送到 Bark、飞书、企业微信、钉钉、ntfy 或通用 webhook。
 
+> [`kiim-wong/dsh-push`](https://github.com/kiim-wong/dsh-push) 的维护分支，跟进当前 DeepSeek Harness 版本（cordis 4.0.x、`@deepseek-ai/dsh-*` 0.2.1-rc.3）。
+
 ## 安装
-
-从 npm 安装：
-
-```sh
-dsh plugin --profile web add dsh-push
-dsh plugin --profile headless add dsh-push
-```
 
 从 GitHub 安装时使用提交固定的仓库地址：
 
 ```sh
-dsh plugin --profile web add github:kiim-wong/dsh-push#<sha>
+dsh plugin --profile web add github:CynthiaYX/dsh-push#<sha>
 ```
 
-Git 安装会执行包的 `prepare` 构建脚本。首次安装前，在目标 profile 的 `pnpm-workspace.yaml` 中允许该包构建：
-
-```yaml
-allowBuilds:
-  dsh-push: true
-```
+仓库随源码一起发布构建好的 `lib/`，所以安装不需要执行构建脚本，也不需要往目标 profile 的 `pnpm-workspace.yaml` 里加 `allowBuilds` 白名单。
 
 包会通过 `cordis.patch.yml` 挂载为 `dsh-push`，不需要修改 dsh monorepo，也不写入 profile 的 patch 配置。
 

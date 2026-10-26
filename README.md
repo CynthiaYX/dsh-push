@@ -4,27 +4,17 @@ English | [简体中文](./README.zh-CN.md)
 
 Push DeepSeek Harness agent lifecycle notifications to Bark, Feishu, WeCom, DingTalk, ntfy, or a generic webhook.
 
+> Maintained fork of [`kiim-wong/dsh-push`](https://github.com/kiim-wong/dsh-push). It tracks current DeepSeek Harness releases (cordis 4.0.x, `@deepseek-ai/dsh-*` 0.2.1-rc.3).
+
 ## Installation
 
-Install from npm:
+Install from GitHub, pinning a commit:
 
 ```sh
-dsh plugin --profile web add dsh-push
-dsh plugin --profile headless add dsh-push
+dsh plugin --profile web add github:CynthiaYX/dsh-push#<sha>
 ```
 
-To install from GitHub, pin the repository to a commit:
-
-```sh
-dsh plugin --profile web add github:kiim-wong/dsh-push#<sha>
-```
-
-Git installations run the package's `prepare` script. Before the first installation, allow the package to build in the target profile's `pnpm-workspace.yaml`:
-
-```yaml
-allowBuilds:
-  dsh-push: true
-```
+This repository ships the prebuilt `lib/` alongside the sources, so installation needs no build script and no `allowBuilds` entry in the profile's `pnpm-workspace.yaml`.
 
 The package mounts itself as `dsh-push` through `cordis.patch.yml`. It does not require changes to the dsh monorepo or write to the profile's patch configuration.
 
