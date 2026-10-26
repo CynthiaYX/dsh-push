@@ -35,7 +35,28 @@ await writeFile(configFile, `${JSON.stringify({
 	channels: [{ type: "webhook", name: "local", url: endpoint }],
 }, null, 2)}\n`);
 
-const { apply } = await import("../src/index.ts");
+const { apply, inject } = await import("../src/index.ts");
+
+// ── loader contract ───────────────────────────────────────────────────────────
+// dsh's plugin loader unwraps a module namespace to `exports.default ?? exports`
+// and only then reads `plugin.inject`. A default export of `apply` therefore hides
+// a module-level `inject`, and the plugin activates without its `agents` service —
+// the `cannot get property "agents" without inject` failure. Pin both halves.
+assert.deepEqual(inject, ["agents"], "plugin must declare its agents dependency");
+assert.equal(typeof apply, "function", "plugin must export apply");
+
+const isNullable = (value: unknown): boolean => value === null || value === undefined;
+function unwrapExports(namespace: Record<string, unknown>): any {
+	if (isNullable(namespace)) return namespace;
+	const fallback = (namespace.default ?? namespace) as Record<string, unknown>;
+	if (!fallback.__esModule) return fallback;
+	return fallback.default ?? fallback;
+}
+const loadedPlugin = unwrapExports({
+	...(await import("../src/index.ts")),
+} as Record<string, unknown>);
+assert.deepEqual([...(loadedPlugin.inject ?? [])], ["agents"], "inject must survive the loader's unwrap");
+assert.equal(typeof loadedPlugin.apply, "function", "loader must resolve a callable apply");
 
 type Listener = (...args: any[]) => any;
 interface FakeAgent {
@@ -48,6 +69,7 @@ let registeredCommand: any;
 let lifecycleDisposer: (() => unknown) | undefined;
 let commandDisposer: (() => unknown) | undefined;
 const listeners = new Map<string, Listener[]>();
+
 const commandService = {
 	register(definition: any): () => void {
 		registeredCommand = definition;
@@ -56,47 +78,73 @@ const commandService = {
 		return disposer;
 	},
 };
-const context = {
-	agents: {},
-	on(name: string, listener: Listener): () => boolean {
-		const bucket = listeners.get(name) ?? [];
-		bucket.push(listener);
-		listeners.set(name, bucket);
-		return () => {
-			const current = listeners.get(name) ?? [];
-			const index = current.indexOf(listener);
-			if (index < 0) return false;
-			current.splice(index, 1);
-			return true;
-		};
-	},
-	inject(_dependencies: string[], callback: (ctx: any) => unknown): unknown {
-		return callback({ commands: commandService });
-	},
-	effect(factory: () => unknown, label?: string): unknown {
-		const result = factory();
-		if (typeof result === "function") {
-			const disposer = result as () => unknown;
-			if (label === "dsh-push lifecycle") lifecycleDisposer = disposer;
-			if (label === "dsh-push commands") commandDisposer = disposer;
-		}
-		return result;
-	},
-};
 
-apply(context as never);
+/**
+ * Compose a fake context that behaves like cordis's proxy: reading a property
+ * that was not injected throws `cannot get property "x" without inject`.
+ * `services` names what this composition provides; `get()` bypasses the guard,
+ * exactly as the real `ctx.get(name, strict)` does.
+ */
+function fakeContext(
+	services: Record<string, unknown>,
+	injected: Record<string, unknown> = { commands: commandService },
+) {
+	const allowed = new Set(Object.keys(services));
+	const base = {
+		...services,
+		get(name: string, _strict?: boolean): unknown {
+			return services[name];
+		},
+		on(name: string, listener: Listener): () => boolean {
+			const bucket = listeners.get(name) ?? [];
+			bucket.push(listener);
+			listeners.set(name, bucket);
+			return () => {
+				const current = listeners.get(name) ?? [];
+				const index = current.indexOf(listener);
+				if (index < 0) return false;
+				current.splice(index, 1);
+				return true;
+			};
+		},
+		inject(_dependencies: string[], callback: (ctx: any) => unknown): unknown {
+			return callback(fakeContext({ ...services, ...injected }));
+		},
+		effect(factory: () => unknown, label?: string): unknown {
+			const result = factory();
+			if (typeof result === "function") {
+				const disposer = result as () => unknown;
+				if (label === "dsh-push lifecycle") lifecycleDisposer = disposer;
+				if (label === "dsh-push commands") commandDisposer = disposer;
+			}
+			return result;
+		},
+	};
+	return new Proxy(base, {
+		get(target, property, receiver) {
+			if (typeof property === "string" && !(property in target) && !allowed.has(property)) {
+				throw new Error(`cannot get property "${property}" without inject`);
+			}
+			return Reflect.get(target, property, receiver);
+		},
+	});
+}
 
-let noCommandsInjectCalled = false;
-apply({
-	agents: {},
-	on: () => () => true,
-	inject: () => {
+apply(fakeContext({ agents: {} }) as never);
+
+{
+	// A composition without the command service must still load its listeners.
+	let noCommandsInjectCalled = false;
+	const withoutCommands = fakeContext({ agents: {} });
+	// Keep this probe off the shared listener map; the first `apply` owns it.
+	withoutCommands.on = () => () => true;
+	withoutCommands.inject = (_dependencies: string[], _callback: (ctx: any) => unknown) => {
 		noCommandsInjectCalled = true;
 		return undefined;
-	},
-	effect: (factory: () => unknown) => factory(),
-} as never);
-assert.equal(noCommandsInjectCalled, true, "plugin must request optional commands injection");
+	};
+	apply(withoutCommands as never);
+	assert.equal(noCommandsInjectCalled, true, "plugin must request optional commands injection");
+}
 
 function agent(id: string, origin?: "subagent"): FakeAgent {
 	return {

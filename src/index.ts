@@ -90,12 +90,15 @@ function rememberTurnEnd(state: RunState, event: SessionEvent): void {
 	}
 }
 
+/**
+ * `agents` is required — every notification is driven by the agent event graph.
+ * `commands` is optional and requested further down, so headless compositions
+ * load the listeners without the `/push` command.
+ */
+export const inject = ["agents"];
+
 /** Install dsh-push lifecycle notifications and the optional `/push` command. */
 export function apply(ctx: Context): void {
-	if ((ctx as unknown as { agents?: unknown }).agents === undefined) {
-		throw new Error("dsh-push requires the dsh-agent event graph");
-	}
-
 	const notifier: Notifier = createNotifier();
 	const states = new WeakMap<Agent, RunState>();
 	const agentsBySession = new Map<Session, Agent>();
@@ -280,5 +283,3 @@ export function apply(ctx: Context): void {
 		});
 	});
 }
-
-export default apply;
