@@ -43,7 +43,9 @@ dsh plugin --profile web add github:CynthiaYX/dsh-push#<sha>
 | `session`、`model` | 会话 id 与 `provider/model` |
 | `host`、`time`、`date` | 主机名、本地 `HH:MM:SS` 与 `YYYY-MM-DD` |
 
-`conversation` 取自会话日志里最新的 `session/title` 事件；宿主装有 `sessionTitle` 服务时优先走该服务。例如 `"titleTemplate": "{{conversation}} · {{status}}"` 就会把对话名作为推送标题。
+`conversation` 取自会话日志里最新的 `session/title` 事件；宿主装有 `sessionTitle` 服务时优先走该服务。例如 `"titleTemplate": "{{conversation}} · {{status}}"` 就会把对话名作为推送标题。会话还没有标题时占位符渲染为空串，因此结果首尾悬挂的分隔符会被剪掉，不会出现 `· 已就绪` 这种开头。
+
+此前只有 Bark 和通用 webhook 会带上 `title`，ntfy 现在也把它作为通知标题发送。ntfy 的 header 只接受 ASCII，含其他字符的标题会以 RFC 2047 编码字（`=?UTF-8?B?...?=`）发出，由 ntfy 解码还原。
 
 ## `/push` 命令
 
@@ -52,6 +54,8 @@ dsh plugin --profile web add github:CynthiaYX/dsh-push#<sha>
 ## 限制
 
 通知发送不重试；每个请求有独立超时和进程退出时的有界 flush。dsh 没有 pi 的会话 quit 事件，因此 `exit` 表示插件树拆卸，不表示某个 Web 会话关闭。推送正文不包含对话正文，只包含生命周期摘要。
+
+`dedupeMs` 用的是沿用自 pi-agent-push 的进程内存状态。在运行中的宿主里把插件关掉再打开（插件市场的做法是热挂载出第二份副本）会留下两个 notifier，各自持有自己的 `lastKey`，同一回合就可能推两条。这样切换过插件后，请重启一次宿主。
 
 渠道实现沿用 pi-agent-push 的协议与签名算法；本项目仅将事件和命令层适配为 Cordis。
 
@@ -64,5 +68,7 @@ pnpm install
 pnpm build
 node test/run.ts
 ```
+
+`node test/live-push.ts` 是手动版的对照检查：它驱动实际装上的那份产物（用 `DSH_PUSH_LIVE_ENTRY` 可换成别的副本），往真实 ntfy topic 推一条，再从 ntfy 的缓存里读回来，因此也能证明标题和优先级确实穿过了网络。它会发出真实通知，所以不在测试集里。加 `--expect-title` 可在标题被丢弃时失败。
 
 把重新生成的 `lib/` 和源码改动一起提交，否则 `github:` 安装会继续使用上一次的构建产物。npm 发布侧由 `pnpm prepublishOnly` 强制同样的顺序。

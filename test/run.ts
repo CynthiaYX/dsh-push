@@ -7,6 +7,10 @@ import { join } from "node:path";
 const root = await mkdtemp(join(tmpdir(), "dsh-push-test-"));
 const configFile = join(root, "config.json");
 const requests: string[] = [];
+/** Request headers per accepted request, index-aligned with `requests`. */
+const requestHeaders: IncomingMessage["headers"][] = [];
+/** Declared explicitly: the server sees `http://127.0.0.1:<port>/…`, not `/push`. */
+const visitedPaths: string[] = [];
 
 const server = createServer((request: IncomingMessage, response: ServerResponse) => {
 	let body = "";
@@ -14,6 +18,8 @@ const server = createServer((request: IncomingMessage, response: ServerResponse)
 	request.on("data", (chunk: string) => { body += chunk; });
 	request.on("end", () => {
 		requests.push(body);
+		requestHeaders.push(request.headers);
+		visitedPaths.push(request.url ?? "");
 		response.statusCode = 200;
 		response.end("ok");
 	});
@@ -276,7 +282,8 @@ assert.equal(
 	`the body template must be able to reference {{title}}, got ${titled.text}`,
 );
 
-// A session without any title renders an empty placeholder, never "undefined".
+// A session without any title renders an empty placeholder, never "undefined",
+// and the separator it leaves behind must not survive into the title.
 const untitledAgent = agent("untitled");
 const beforeUntitled = requests.length;
 emit("agent/created", { agent: untitledAgent });
@@ -284,8 +291,82 @@ emit("agent/status", { agent: untitledAgent, status: "running" });
 emit("agent/status", { agent: untitledAgent, status: "idle" });
 await waitForRequests(beforeUntitled + 1);
 const untitled = JSON.parse(requests.at(-1)!);
-assert.equal(untitled.title, "· 已就绪", `an untitled session must render empty, got ${untitled.title}`);
+assert.equal(untitled.title, "已就绪", `an untitled session must drop the dangling separator, got ${untitled.title}`);
 assert.ok(!untitled.text.includes("undefined"), `no placeholder may leak "undefined", got ${untitled.text}`);
+
+// ── ntfy headers ─────────────────────────────────────────────────────────────
+// ntfy is the one channel that carried the title nowhere: it posted the body
+// alone and dropped `payload.title`, so every notification showed the topic
+// name. The title now travels in the `Title` header, RFC 2047-encoded when it
+// contains anything a ByteString cannot hold.
+const ntfyEndpoint = `http://127.0.0.1:${address.port}`;
+
+async function pushNtfy(
+	topic: string,
+	channel: Record<string, unknown> = {},
+	templates: { title?: string; body?: string } = {},
+): Promise<IncomingMessage["headers"]> {
+	await writeFile(configFile, `${JSON.stringify({
+		enabled: true,
+		includeSubagents: false,
+		timeoutMs: 2000,
+		shutdownTimeoutMs: 1000,
+		dedupeMs: 0,
+		events: { idle: true, interrupted: true, needInput: true, exit: false },
+		titleTemplate: templates.title ?? "dsh {{event}}",
+		template: templates.body ?? "{{reason}}",
+		channels: [{ type: "ntfy", name: "phone", server: ntfyEndpoint, topic, ...channel }],
+	}, null, 2)}\n`);
+	emit("session/created", rootAgent.session);
+	const before = requests.length;
+	await registeredCommand.handler({
+		commandId: `ntfy-${topic}`,
+		agent: rootAgent,
+		rawInput: "test",
+		signal: new AbortController().signal,
+	});
+	await waitForRequests(before + 1);
+	assert.equal(visitedPaths.at(-1), `/${encodeURIComponent(topic)}`, "the topic must be the request path");
+	return requestHeaders.at(-1)!;
+}
+
+const asciiHeaders = await pushNtfy("ascii");
+assert.equal(asciiHeaders.title, "dsh test", "an ASCII title goes out verbatim");
+assert.equal(asciiHeaders["content-type"], "text/plain; charset=utf-8");
+assert.equal(requests.at(-1), "dsh-push 通道测试", "the body stays plain message text");
+
+// A Chinese title would throw in `Headers` if it were passed through raw.
+const cjkHeaders = await pushNtfy("cjk", { priority: "high" }, { title: "{{status}}" });
+const encoded = String(cjkHeaders.title ?? "");
+const encodedMatch = /^=\?UTF-8\?B\?(.+)\?=$/.exec(encoded);
+assert.notEqual(encodedMatch, null, `a non-ASCII title must be RFC 2047 encoded, got ${encoded}`);
+assert.equal(Buffer.from(encodedMatch![1], "base64").toString("utf-8"), "测试", "the encoded title must decode back to the rendered title");
+assert.equal(cjkHeaders.priority, "high", "priority must still be sent as a header");
+
+// Values from config may not be able to break out of a header line.
+const injectedHeaders = await pushNtfy("inject", { clickUrl: "https://example.com/\r\nX-Evil: 1", tags: ["a\r\nb", "c"] });
+assert.equal(injectedHeaders.click, "https://example.com/ X-Evil: 1", "CRLF must be folded, never emitted as a new header");
+assert.equal(injectedHeaders.tags, "a b,c", "each tag is cleaned individually");
+assert.equal(injectedHeaders["x-evil"], undefined, "no injected header may reach the request");
+
+// An empty rendered title must omit the header instead of sending a blank one.
+{
+	const { ntfyHeaderValue } = await import("../src/channels/ntfy.ts");
+	assert.equal(ntfyHeaderValue(""), "", "an empty title produces no header at all");
+	assert.equal(ntfyHeaderValue("   "), "", "a whitespace-only title produces no header at all");
+	assert.equal(ntfyHeaderValue("plain ascii"), "plain ascii");
+}
+
+// ── tidied title ─────────────────────────────────────────────────────────────
+// `{{conversation}}：{{status}}` renders to `：已就绪` before a session is named.
+{
+	const { tidyTitle } = await import("../src/notifier.ts");
+	assert.equal(tidyTitle("：已就绪"), "已就绪", "a leading separator must not survive");
+	assert.equal(tidyTitle(" · 已就绪"), "已就绪", "whitespace around the separator goes too");
+	assert.equal(tidyTitle("深度推送：已就绪"), "深度推送：已就绪", "an inner separator is content");
+	assert.equal(tidyTitle("："), "", "a separator-only title collapses, so `dsh` can take over");
+	assert.equal(tidyTitle("🚀 已就绪"), "🚀 已就绪", "a leading emoji is not a separator");
+}
 
 // ── `/push status` alias ─────────────────────────────────────────────────────
 // The registered description and both READMEs advertise `status`; bare `/push`

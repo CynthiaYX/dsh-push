@@ -43,7 +43,9 @@ Supported events are `idle`, `interrupted`, `needInput`, and `exit`. `minDuratio
 | `session`, `model` | Session id and `provider/model` |
 | `host`, `time`, `date` | Hostname, local `HH:MM:SS`, and `YYYY-MM-DD` |
 
-`conversation` comes from the session's latest `session/title` event, read through the host's `sessionTitle` service when that service is mounted. For example, `"titleTemplate": "{{conversation}} · {{status}}"` pushes the conversation's name as the notification title.
+`conversation` comes from the session's latest `session/title` event, read through the host's `sessionTitle` service when that service is mounted. For example, `"titleTemplate": "{{conversation}} · {{status}}"` pushes the conversation's name as the notification title. A session with no title yet renders the placeholder empty, so a separator left dangling at either edge of the result is trimmed instead of showing up as `· 已就绪`.
+
+Only Bark and generic webhooks used to carry `title`; ntfy now sends it as the notification title too. ntfy header values must be ASCII, so a title containing anything else is sent as an RFC 2047 encoded word (`=?UTF-8?B?...?=`) that ntfy decodes back to the original text.
 
 ## `/push` command
 
@@ -52,6 +54,8 @@ When the command service is mounted, dsh-push provides `/push status`, `list`, `
 ## Limitations
 
 Notification delivery is not retried. Each request has an independent timeout, and process teardown uses a bounded flush. dsh has no equivalent of pi's session quit event, so `exit` means the plugin tree is being disposed, not that an individual web session closed. Notification bodies contain lifecycle summaries, not conversation content.
+
+Duplicate-critical deduplication (`dedupeMs`) is in-process state reused from pi-agent-push. Toggling a plugin off and on inside a running host — which a plugin market does by hot-mounting a second copy — leaves two notifiers in one process, each with its own `lastKey`, so a single turn can be pushed twice. Restart the host after toggling plugins that way.
 
 Channel implementations retain the protocols and signing algorithms from pi-agent-push. This package adapts only the event and command layers to Cordis.
 
@@ -64,5 +68,7 @@ pnpm install
 pnpm build
 node test/run.ts
 ```
+
+`node test/live-push.ts` is the manual counterpart: it drives the build that is actually installed (swap `DSH_PUSH_LIVE_ENTRY` to point at another copy) against a real ntfy topic and then reads the message back from ntfy's cache, so it also proves the title and priority survived the wire. It sends a real notification, so it is not part of the test suite. Add `--expect-title` to fail when the title is dropped.
 
 Commit the regenerated `lib/` together with the source change; otherwise a `github:` install keeps running the previous build. `pnpm prepublishOnly` enforces the same order for npm releases.

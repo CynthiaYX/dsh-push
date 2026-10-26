@@ -1,6 +1,6 @@
 {
   "name": "dsh-push",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Push DeepSeek Harness agent lifecycle notifications to configurable channels",
   "license": "MIT",
   "repository": {

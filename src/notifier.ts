@@ -53,7 +53,7 @@ export function buildPayload(config: NotifyConfig, input: PayloadInput): NotifyP
 	};
 
 	// The body template may reference the rendered title, so publish it first.
-	const title = render(config.titleTemplate, vars).trim() || "dsh";
+	const title = tidyTitle(render(config.titleTemplate, vars)) || "dsh";
 	vars.title = title;
 	let text = render(config.template, vars).trim() || title;
 	if (text.length > config.maxTextChars) text = `${text.slice(0, config.maxTextChars - 1)}…`;
@@ -62,6 +62,21 @@ export function buildPayload(config: NotifyConfig, input: PayloadInput): NotifyP
 	vars.text = text;
 
 	return { event: input.event, status: input.status, reason: input.reason, title, text, vars };
+}
+
+/**
+ * Drop the empty placeholder `{{conversation}}` leaves behind.
+ *
+ * `"{{conversation}}：{{status}}"` renders to `"：已就绪"` for a session that has
+ * no title yet, which reads as a typo on the phone. Only separators adjacent to
+ * the edges are removed, so a leading emoji or a deliberate prefix survives.
+ */
+export function tidyTitle(raw: string): string {
+	return raw
+		.trim()
+		.replace(/^[\s:：|·•—–\-\/、,，]+/, "")
+		.replace(/[\s:：|·•—–\-\/、,，]+$/, "")
+		.trim();
 }
 
 interface Target {

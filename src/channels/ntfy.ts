@@ -4,12 +4,34 @@
  * Body is plain text only (`message` / payload.text). No JSON envelope.
  * Optional priority / tags / click / icon go as HTTP headers so they do not
  * pollute the notification body.
+ *
+ * The message title goes in the `Title` header too. HTTP header values are
+ * ByteStrings, so a non-ASCII title (any Chinese one, for instance) throws in
+ * `fetch` unless it is encoded first — ntfy documents RFC 2047 for exactly
+ * this case, and decodes `=?UTF-8?B?...?=` back into the original text.
  */
 
 import { httpRequest, localFailure, type HttpResult } from "../http.ts";
 import type { NotifyPayload, NtfyChannel } from "../types.ts";
 
 const DEFAULT_SERVER = "https://ntfy.sh";
+
+const NON_ASCII = /[^\x20-\x7e]/;
+// Header folding: collapse CR/LF/TAB and every other control char to one space,
+// so a value taken from config can never start a second header line.
+const UNSAFE_HEADER_CHARS = /[\u0000-\u001f\u007f]+/g;
+
+/**
+ * Make `value` safe to hand to `Headers`. ntfy accepts either plain UTF-8
+ * (only if the client can send it) or the RFC 2047 encoded-word form, so we
+ * keep ASCII alone and encode anything else.
+ */
+export function ntfyHeaderValue(value: string): string {
+	const cleaned = value.replace(UNSAFE_HEADER_CHARS, " ").trim();
+	if (!cleaned) return "";
+	if (!NON_ASCII.test(cleaned)) return cleaned;
+	return `=?UTF-8?B?${Buffer.from(cleaned, "utf-8").toString("base64")}?=`;
+}
 
 export async function sendNtfy(
 	channel: NtfyChannel,
@@ -32,18 +54,27 @@ export async function sendNtfy(
 	}
 
 	// Metadata via headers only — body stays pure message text.
+	const title = ntfyHeaderValue(payload.title ?? "");
+	// An empty title would make ntfy fall back to the topic name; skipping the
+	// header keeps that behaviour rather than sending a blank one.
+	if (title) headers.Title = title;
 	if (channel.priority != null && channel.priority !== "") {
 		headers.Priority = String(channel.priority);
 	}
 	if (channel.tags != null) {
-		const tags = Array.isArray(channel.tags)
-			? channel.tags.join(",")
-			: String(channel.tags);
-		if (tags.trim()) headers.Tags = tags;
+		// Encoded per tag: one encoded-word for the whole list would decode back
+		// into a single tag containing the commas.
+		const tags = (Array.isArray(channel.tags) ? channel.tags : [String(channel.tags)])
+			.map((tag) => ntfyHeaderValue(tag))
+			.filter((tag) => tag.length > 0);
+		if (tags.length > 0) headers.Tags = tags.join(",");
 	}
-	if (channel.clickUrl) headers.Click = channel.clickUrl;
-	if (channel.icon) headers.Icon = channel.icon;
-	if (channel.email) headers.Email = channel.email;
+	const clickUrl = ntfyHeaderValue(channel.clickUrl ?? "");
+	if (clickUrl) headers.Click = clickUrl;
+	const icon = ntfyHeaderValue(channel.icon ?? "");
+	if (icon) headers.Icon = icon;
+	const email = ntfyHeaderValue(channel.email ?? "");
+	if (email) headers.Email = email;
 
 	const url = `${server}/${encodeURIComponent(topic)}`;
 	const body = payload.text;
