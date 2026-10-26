@@ -25,6 +25,7 @@ function usage(): string {
 	return [
 		"用法:",
 		"  /push                         状态",
+		"  /push status                  状态（与裸 /push 相同）",
 		"  /push list                    列出渠道",
 		"  /push get <渠道>              查看渠道配置（密钥脱敏）",
 		"  /push enable <渠道>           开启渠道并写回 config.json",
@@ -170,7 +171,7 @@ export function handlePushCommand(
 	const tokens = tokenize(args.trim());
 	const action = (tokens[0] ?? "").toLowerCase();
 
-	if (!action) {
+	if (!action || action === "status") {
 		invalidateConfigCache();
 		const config = loadConfig();
 		return {

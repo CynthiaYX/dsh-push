@@ -14,7 +14,7 @@
     "needInput": true,
     "exit": false
   },
-  "titleTemplate": "dsh {{status}}",
+  "titleTemplate": "{{conversation}} · {{status}}",
   "template": "dsh {{status}} · {{reason}}",
   "channels": [
     {

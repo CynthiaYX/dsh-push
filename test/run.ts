@@ -62,7 +62,11 @@ type Listener = (...args: any[]) => any;
 interface FakeAgent {
 	id: string;
 	options: { provider: string; model: string };
-	session: { id: string; header: { cwd: string; origin?: "subagent" } };
+	session: {
+		id: string;
+		header: { cwd: string; origin?: "subagent" };
+		snapshotEvents?: () => readonly any[];
+	};
 }
 
 let registeredCommand: any;
@@ -146,11 +150,18 @@ apply(fakeContext({ agents: {} }) as never);
 	assert.equal(noCommandsInjectCalled, true, "plugin must request optional commands injection");
 }
 
-function agent(id: string, origin?: "subagent"): FakeAgent {
+function agent(id: string, origin?: "subagent", title?: string): FakeAgent {
+	const events = title === undefined
+		? []
+		: [{ type: "session/title", data: { title, source: { kind: "user" } } }];
 	return {
 		id,
 		options: { provider: "provider", model: "model" },
-		session: { id, header: { cwd: root, ...(origin === undefined ? {} : { origin }) } },
+		session: {
+			id,
+			header: { cwd: root, ...(origin === undefined ? {} : { origin }) },
+			snapshotEvents: () => events,
+		},
 	};
 }
 
@@ -235,6 +246,58 @@ const commandResult = await registeredCommand.handler({
 });
 assert.equal(commandResult.kind, "success");
 assert.equal(JSON.parse(requests.at(-1)!).event, "test");
+
+// ── conversation title ───────────────────────────────────────────────────────
+// The title template reads `{{conversation}}`; the body template additionally
+// reads `{{title}}`, which must be published before the body is rendered.
+await writeFile(configFile, `${JSON.stringify({
+	enabled: true,
+	includeSubagents: false,
+	timeoutMs: 2000,
+	shutdownTimeoutMs: 1000,
+	events: { idle: true, interrupted: true, needInput: true, exit: false },
+	titleTemplate: "{{conversation}} · {{status}}",
+	template: "{{title}} | {{conversation}} | {{reason}}",
+	channels: [{ type: "webhook", name: "local", url: endpoint }],
+}, null, 2)}\n`);
+emit("session/created", rootAgent.session);
+
+const titledAgent = agent("titled", undefined, "DeepSeek 手机远程推送");
+const beforeTitled = requests.length;
+emit("agent/created", { agent: titledAgent });
+emit("agent/status", { agent: titledAgent, status: "running" });
+emit("agent/status", { agent: titledAgent, status: "idle" });
+await waitForRequests(beforeTitled + 1);
+const titled = JSON.parse(requests.at(-1)!);
+assert.equal(titled.title, "DeepSeek 手机远程推送 · 已就绪", `title must carry the conversation name, got ${titled.title}`);
+assert.equal(
+	titled.text,
+	"DeepSeek 手机远程推送 · 已就绪 | DeepSeek 手机远程推送 | 输出结束，等待输入",
+	`the body template must be able to reference {{title}}, got ${titled.text}`,
+);
+
+// A session without any title renders an empty placeholder, never "undefined".
+const untitledAgent = agent("untitled");
+const beforeUntitled = requests.length;
+emit("agent/created", { agent: untitledAgent });
+emit("agent/status", { agent: untitledAgent, status: "running" });
+emit("agent/status", { agent: untitledAgent, status: "idle" });
+await waitForRequests(beforeUntitled + 1);
+const untitled = JSON.parse(requests.at(-1)!);
+assert.equal(untitled.title, "· 已就绪", `an untitled session must render empty, got ${untitled.title}`);
+assert.ok(!untitled.text.includes("undefined"), `no placeholder may leak "undefined", got ${untitled.text}`);
+
+// ── `/push status` alias ─────────────────────────────────────────────────────
+// The registered description and both READMEs advertise `status`; bare `/push`
+// is the same action, so both spellings must resolve.
+const statusAlias = await registeredCommand.handler({
+	commandId: "test-status",
+	agent: rootAgent,
+	rawInput: "status",
+	signal: new AbortController().signal,
+});
+assert.equal(statusAlias.kind, "success", `/push status must succeed, got ${statusAlias.text}`);
+assert.ok(statusAlias.text.includes("dsh-push:"), `/push status must print the status block, got ${statusAlias.text}`);
 
 await writeFile(configFile, `${JSON.stringify({
 	enabled: true,

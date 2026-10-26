@@ -30,6 +30,8 @@ export interface PayloadInput {
 	durationMs?: number;
 	session?: string;
 	model?: string;
+	/** Latest conversation title; empty until the session has one. */
+	conversation?: string;
 }
 
 export function buildPayload(config: NotifyConfig, input: PayloadInput): NotifyPayload {
@@ -41,6 +43,7 @@ export function buildPayload(config: NotifyConfig, input: PayloadInput): NotifyP
 		reason: input.reason,
 		cwd,
 		project: basename(cwd) || cwd,
+		conversation: input.conversation ?? "",
 		duration: input.durationMs === undefined ? "" : formatDuration(input.durationMs),
 		session: input.session ?? "",
 		model: input.model ?? "",
@@ -49,12 +52,13 @@ export function buildPayload(config: NotifyConfig, input: PayloadInput): NotifyP
 		date: now.toISOString().slice(0, 10),
 	};
 
-	const title = render(config.titleTemplate, vars).trim() || "dsh"
+	// The body template may reference the rendered title, so publish it first.
+	const title = render(config.titleTemplate, vars).trim() || "dsh";
+	vars.title = title;
 	let text = render(config.template, vars).trim() || title;
 	if (text.length > config.maxTextChars) text = `${text.slice(0, config.maxTextChars - 1)}…`;
 
 	// Exposed to webhook body templates; defined after rendering to avoid recursion.
-	vars.title = title;
 	vars.text = text;
 
 	return { event: input.event, status: input.status, reason: input.reason, title, text, vars };

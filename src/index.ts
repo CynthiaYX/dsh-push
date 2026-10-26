@@ -53,11 +53,56 @@ function modelLabel(agent: Agent): string {
 	return [provider, model].filter((part): part is string => typeof part === "string" && part.length > 0).join("/");
 }
 
-function payloadContext(agent: Agent): Pick<PayloadInput, "cwd" | "session" | "model"> {
+/** The part of the `sessionTitle` service this plugin reads. */
+interface SessionTitleReader {
+	get(session: Session): { title?: unknown } | undefined;
+}
+
+/** A log event wide enough to hold `session/title`, which the titles bundle declares. */
+interface TitleLogEvent {
+	type: string;
+	data?: { title?: unknown };
+}
+
+/**
+ * Latest conversation title for `session` — the name the conversation list shows.
+ *
+ * Prefers the `sessionTitle` service (the host's own fold) and falls back to the
+ * last `session/title` log event, so pushes keep their title in profiles that do
+ * not mount the titles bundle. Returns `""` before any title exists, and never
+ * throws: a label is not worth failing a notification over.
+ */
+function titleOf(ctx: Context, session: Session): string {
+	try {
+		const service = ctx.get("sessionTitle", false) as SessionTitleReader | undefined;
+		const served = service?.get(session)?.title;
+		if (typeof served === "string" && served.length > 0) return served;
+	} catch {
+		// a mounted service may reject a session it has not folded yet
+	}
+	try {
+		const events = session.snapshotEvents() as readonly TitleLogEvent[];
+		for (let index = events.length - 1; index >= 0; index -= 1) {
+			const event = events[index];
+			if (event.type !== "session/title") continue;
+			const title = event.data?.title;
+			return typeof title === "string" ? title : "";
+		}
+	} catch {
+		// a detached session may refuse a synchronous read
+	}
+	return "";
+}
+
+function payloadContext(
+	ctx: Context,
+	agent: Agent,
+): Pick<PayloadInput, "cwd" | "session" | "model" | "conversation"> {
 	return {
 		cwd: agent.session.header.cwd ?? process.cwd(),
 		session: String(agent.session.id),
 		model: modelLabel(agent),
+		conversation: titleOf(ctx, agent.session),
 	};
 }
 
@@ -103,6 +148,7 @@ export function apply(ctx: Context): void {
 	const states = new WeakMap<Agent, RunState>();
 	const agentsBySession = new Map<Session, Agent>();
 	const liveAgents = new Set<Agent>();
+	const contextOf = (agent: Agent) => payloadContext(ctx, agent);
 	let runtimeEnabled = true;
 
 	const getState = (agent: Agent): RunState => {
@@ -112,7 +158,6 @@ export function apply(ctx: Context): void {
 		states.set(agent, created);
 		return created;
 	};
-
 
 	ctx.on("session/created", () => {
 		invalidateConfigCache();
@@ -150,7 +195,7 @@ export function apply(ctx: Context): void {
 				status: "已中断",
 				reason: "本轮被取消",
 				durationMs,
-				...payloadContext(agent),
+				...contextOf(agent),
 			});
 			return;
 		}
@@ -160,7 +205,7 @@ export function apply(ctx: Context): void {
 				status: "已中断",
 				reason: `运行出错：${summarizeError(state.errorMessage, ERROR_REASON_CHARS) || "未知错误"}`,
 				durationMs,
-				...payloadContext(agent),
+				...contextOf(agent),
 			});
 			return;
 		}
@@ -170,7 +215,7 @@ export function apply(ctx: Context): void {
 			status: "已就绪",
 			reason: "输出结束，等待输入",
 			durationMs,
-			...payloadContext(agent),
+			...contextOf(agent),
 		});
 	});
 
@@ -201,7 +246,7 @@ export function apply(ctx: Context): void {
 					status: "需要确认",
 					reason: "dsh 正在等你回答问题",
 					durationMs: state === undefined ? undefined : Math.max(0, Date.now() - state.startedAt),
-					...payloadContext(agent),
+					...contextOf(agent),
 				});
 			}
 		}
@@ -218,7 +263,7 @@ export function apply(ctx: Context): void {
 					event: "exit",
 					status: "已退出",
 					reason: "插件结束",
-					...payloadContext(agent),
+					...contextOf(agent),
 				}, timeout)));
 			} else if (liveAgents.size === 0) {
 				await notifier.fireBlocking(config, {
@@ -271,7 +316,7 @@ export function apply(ctx: Context): void {
 								? "dsh-push 通道测试"
 								: `dsh-push 测试 (${result.testFilter})`,
 							durationMs: 0,
-							...payloadContext(agent),
+							...contextOf(agent),
 						},
 					);
 					const ok = results.length > 0 && results.every((item) => item.ok);
